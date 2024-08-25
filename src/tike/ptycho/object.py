@@ -24,7 +24,13 @@ logger = logging.getLogger(__name__)
 
 @dataclasses.dataclass
 class ObjectOptions:
+
     """Manage data and setting related to object correction."""
+    update_start: int = 0
+    """Start object updates at this epoch."""
+
+    update_period: int = 1
+    """The number of epochs between object updates"""
 
     convergence_tolerance: float = 0
     """Terminate reconstruction early when the mnorm of the object update is
@@ -83,6 +89,8 @@ class ObjectOptions:
     def copy_to_device(self) -> ObjectOptions:
         """Copy to the current GPU memory."""
         options = ObjectOptions(
+            update_start=self.update_start,
+            update_period=self.update_period,
             convergence_tolerance=self.convergence_tolerance,
             positivity_constraint=self.positivity_constraint,
             smoothness_constraint=self.smoothness_constraint,
@@ -117,6 +125,8 @@ class ObjectOptions:
     def copy_to_host(self) -> ObjectOptions:
         """Copy to the host CPU memory."""
         options = ObjectOptions(
+            update_start=self.update_start,
+            update_period=self.update_period,
             convergence_tolerance=self.convergence_tolerance,
             positivity_constraint=self.positivity_constraint,
             smoothness_constraint=self.smoothness_constraint,
@@ -138,6 +148,8 @@ class ObjectOptions:
     def resample(self, factor: float, interp) -> ObjectOptions:
         """Return a new `ObjectOptions` with the parameters rescaled."""
         options = ObjectOptions(
+            update_start=self.update_start,
+            update_period=self.update_period,
             convergence_tolerance=self.convergence_tolerance,
             positivity_constraint=self.positivity_constraint,
             smoothness_constraint=self.smoothness_constraint,

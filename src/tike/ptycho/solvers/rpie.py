@@ -33,6 +33,7 @@ def rpie(
     op: tike.operators.Ptycho,
     epoch: int,
 ) -> PtychoParameters:
+    
     """Solve the ptychography problem using regularized ptychographical engine.
 
     The rPIE update direction can be shown to be equivalent to a conventional
@@ -77,18 +78,23 @@ def rpie(
     .. seealso:: :py:mod:`tike.ptycho`
 
     """
-    scan = parameters.scan
-    psi = parameters.psi
-    probe = parameters.probe
+    scan              = parameters.scan
+    psi               = parameters.psi
+    probe             = parameters.probe
     algorithm_options = parameters.algorithm_options
-    eigen_weights = parameters.eigen_weights
-    eigen_probe = parameters.eigen_probe
-    measured_pixels = parameters.exitwave_options.measured_pixels
-    exitwave_options = parameters.exitwave_options
-    position_options = parameters.position_options
-    object_options = parameters.object_options
-    probe_options = parameters.probe_options
-    recover_probe = probe_options is not None and epoch >= probe_options.update_start
+    eigen_weights     = parameters.eigen_weights
+    eigen_probe       = parameters.eigen_probe
+    measured_pixels   = parameters.exitwave_options.measured_pixels
+    exitwave_options  = parameters.exitwave_options
+    position_options  = parameters.position_options
+    object_options    = parameters.object_options
+    probe_options     = parameters.probe_options
+
+    recover_probe        = probe_options is not None and epoch >= probe_options.update_start
+    recover_probe_period = probe_options is not None and ( cp.mod( epoch, probe_options.update_period ) == 0 )
+
+    recover_object        = object_options is not None and epoch >= object_options.update_start
+    recover_object_period = object_options is not None and ( cp.mod( epoch, object_options.update_period ) == 0 )
 
     # CONVERSTION AREA ABOVE ---------------------------------------
 
@@ -97,12 +103,13 @@ def rpie(
     else:
         order = tike.random.randomizer_np.permutation
 
-    psi_update_numerator = None
-    probe_update_numerator = None
-    position_update_numerator = None
+    psi_update_numerator        = None
+    probe_update_numerator      = None
+    position_update_numerator   = None
     position_update_denominator = None
 
     batch_cost = cp.empty(algorithm_options.num_batch, dtype=tike.precision.floating)
+    
     for n in order(algorithm_options.num_batch):
         (
             costs,
@@ -334,22 +341,20 @@ def _get_nearplane_gradients(
     recover_probe: bool,
     position_options: typing.Union[None, PositionOptions],
     exitwave_options: ExitWaveOptions,
-) -> typing.Tuple[
-    float, npt.NDArray, npt.NDArray, npt.NDArray, npt.NDArray, typing.Union[npt.NDArray, None]
-]:
+    ) -> typing.Tuple[ float, npt.NDArray, npt.NDArray, npt.NDArray, npt.NDArray, typing.Union[npt.NDArray, None] ]:
+    
     batch_start = batches[n][0]
 
-    batch_size = len(batches[n])
+    batch_size  = len(batches[n])
 
-    bcosts = cp.empty(shape=batch_size, dtype=tike.precision.floating)
+    bcosts = cp.empty( shape=batch_size, dtype=tike.precision.floating)
 
     psi_update_numerator = cp.zeros_like( psi ) if psi_update_numerator is None else psi_update_numerator
     
     #probe_update_numerator = cp.zeros_like( probe ) if probe_update_numerator is None else probe_update_numerator
     probe_update_numerator = cp.zeros( ( psi.shape[0], *probe.shape ), dtype = probe.dtype )
 
-    position_update_numerator = cp.empty_like( scan ) if position_update_numerator is None else position_update_numerator
-
+    position_update_numerator   = cp.empty_like( scan ) if position_update_numerator   is None else position_update_numerator
     position_update_denominator = cp.empty_like( scan ) if position_update_denominator is None else position_update_denominator
 
     def keep_some_args_constant(
@@ -358,6 +363,7 @@ def _get_nearplane_gradients(
         hi: int,
     ):
         (data,) = ind_args
+
         nonlocal bcosts, psi_update_numerator, probe_update_numerator
         nonlocal position_update_numerator, position_update_denominator
         nonlocal eigen_weights, scan
@@ -377,10 +383,8 @@ def _get_nearplane_gradients(
             cp.square(cp.abs(farplane)),
             axis=list(range(1, farplane.ndim - 2)),
         )
-        bcosts[blo:bhi] = getattr(
-            tike.operators,
-            f'{exitwave_options.noise_model}_each_pattern',
-        )(
+
+        bcosts[blo:bhi] = getattr( tike.operators, f'{exitwave_options.noise_model}_each_pattern', )(
             data[:, measured_pixels][:, None, :],
             intensity[:, measured_pixels][:, None, :],
         )
@@ -419,24 +423,22 @@ def _get_nearplane_gradients(
                     exitwave_options.step_length_weight,
                 )
 
-            farplane[..., measured_pixels] = (-step_length *
-                                              grad_cost)[..., measured_pixels]
+            farplane[..., measured_pixels] = (-step_length * grad_cost)[..., measured_pixels]
 
         else:
 
             # Gaussian noise model for exitwave updates, steplength = 1
             # TODO: optimal step lengths using 2nd order taylor expansion
 
-            farplane[..., measured_pixels] = -getattr(
-                tike.operators, f'{exitwave_options.noise_model}_grad')(
+            farplane[..., measured_pixels] = -getattr( tike.operators, f'{exitwave_options.noise_model}_grad')(
                     data,
                     farplane,
-                    intensity,
-                )[..., measured_pixels]
+                    intensity, 
+                    )[..., measured_pixels]
 
         unmeasured_pixels = cp.logical_not(measured_pixels)
-        farplane[..., unmeasured_pixels] *= (
-            exitwave_options.unmeasured_pixels_scaling - 1.0)
+
+        farplane[..., unmeasured_pixels] *= ( exitwave_options.unmeasured_pixels_scaling - 1.0)
 
         pad, end = op.diffraction.pad, op.diffraction.end
 
@@ -444,7 +446,6 @@ def _get_nearplane_gradients(
 
         if object_options:
 
-            #for tt in cp.arange( psi.shape[0] - 1, -1, -1 ) :
             for tt in range(len(psi) - 1, -1, -1 ) :        
 
                 grad_psi = (cp.conj(multislice_probes[ tt, :, None, ... ]) * diff / probe.shape[-3]).reshape( scan[lo:hi].shape[0] * probe.shape[-3], *probe.shape[-2:] )

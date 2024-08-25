@@ -303,24 +303,25 @@ class Reconstruction():
         num_gpu: typing.Union[int, typing.Tuple[int, ...]] = 1,
         use_mpi: bool = False,
     ):
-        if (np.any(np.asarray(data.shape) < 1) or data.ndim != 3
-                or data.shape[-2] != data.shape[-1]):
-            raise ValueError(
-                f"data shape {data.shape} is incorrect. "
-                "It should be (N, W, H), "
-                "where N >= 1 is the number of square diffraction patterns.")
-        if data.shape[0] != parameters.scan.shape[0]:
-            raise ValueError(
-                f"data shape {data.shape} and scan shape {parameters.scan.shape} "
-                "are incompatible. They should have the same leading dimension."
+        
+        if (np.any(np.asarray(data.shape) < 1) or data.ndim != 3 or data.shape[-2] != data.shape[-1]):
+            raise ValueError( f"data shape {data.shape} is incorrect. "
+                              "It should be (N, W, H), "
+                              "where N >= 1 is the number of square diffraction patterns."
             )
-        if np.any(
-                np.asarray(parameters.probe.shape[-2:]) > np.asarray(
-                    data.shape[-2:])):
-            raise ValueError(f"probe shape {parameters.probe.shape} "
-                             f"and data shape {data.shape} are incompatible. "
-                             "The probe width/height must be "
-                             f"<= the data width/height .")
+        
+        if data.shape[0] != parameters.scan.shape[0]:
+            raise ValueError( f"data shape {data.shape} and scan shape {parameters.scan.shape} "
+                              "are incompatible. They should have the same leading dimension."
+            )
+        
+        if np.any( np.asarray(parameters.probe.shape[-2:]) > np.asarray( data.shape[-2:])):
+            raise ValueError( f"probe shape {parameters.probe.shape} "
+                              f"and data shape {data.shape} are incompatible. "
+                              "The probe width/height must be "
+                              f"<= the data width/height ." 
+            )
+        
         logger.info("{} on {:,d} - {:,d} by {:,d} frames for at most {:,d} "
                     "epochs.".format(
                         parameters.algorithm_options.name,
@@ -329,30 +330,33 @@ class Reconstruction():
                     ))
 
         if use_mpi:
+
             mpi = tike.communicators.MPIComm
+
             if parameters.psi is None:
                 raise ValueError(
                     "When MPI is enabled, initial object guess cannot be None; "
                     "automatic psi initialization is not synchronized "
                     "across processes.")
         else:
+
             mpi = tike.communicators.NoMPIComm  # isinstance(mpi, tike.communicators.NoMPIComm) # THIS ALWAYS RETURNS FALSE?
 
-        self.data: typing.List[npt.ArrayLike] = [data]
-        self.parameters: typing.List[solvers.PtychoParameters] = [
-            copy.deepcopy(parameters)
-        ]
-        self.device = cp.cuda.Device(
-            num_gpu[0] if isinstance(num_gpu, tuple) else None)
+        self.data: typing.List[ npt.ArrayLike ] = [ data ]
+
+        self.parameters: typing.List[ solvers.PtychoParameters ] = [ copy.deepcopy(parameters) ]
+
+        self.device = cp.cuda.Device( num_gpu[0] if isinstance(num_gpu, tuple) else None )
+        
         self.operator = tike.operators.Ptycho(
-            probe_shape=parameters.probe.shape[-1],
-            detector_shape=data.shape[-1],
-            nz=parameters.psi.shape[-2],
-            n=parameters.psi.shape[-1],
-            norm=parameters.exitwave_options.propagation_normalization,
-            probe_wavelength=parameters.probe_options.probe_wavelength,
-            probe_FOV_lengths=parameters.probe_options.probe_FOV_lengths,
-            multislice_propagation_distance=parameters.object_options.multislice_propagation_distance,
+            probe_shape                     = parameters.probe.shape[-1],
+            detector_shape                  = data.shape[-1],
+            nz                              = parameters.psi.shape[-2],
+            n                               = parameters.psi.shape[-1],
+            norm                            = parameters.exitwave_options.propagation_normalization,
+            probe_wavelength                = parameters.probe_options.probe_wavelength,
+            probe_FOV_lengths               = parameters.probe_options.probe_FOV_lengths,
+            multislice_propagation_distance = parameters.object_options.multislice_propagation_distance,
         )
 
         self.comm = tike.communicators.Comm(num_gpu, mpi)   
@@ -363,30 +367,27 @@ class Reconstruction():
         self.comm.__enter__()
 
         # Divide the inputs into regions
-        if not np.all(np.isfinite(self.data[0])) or np.any(self.data[0] < 0):
-            warnings.warn(
-                "Diffraction patterns contain invalid data. "
-                "All data should be non-negative and finite.", UserWarning)
+        if not np.all( np.isfinite(self.data[0])) or np.any(self.data[0] < 0 ):
+            warnings.warn( "Diffraction patterns contain invalid data. "
+                           "All data should be non-negative and finite.", UserWarning)
 
         (
             self.comm.order,
             self.batches,
             self.comm.stripe_start,
         ) = tike.cluster.by_scan_stripes_contiguous(
-            scan=self.parameters[0].scan,
-            pool=self.comm.pool,
-            shape=(self.comm.pool.num_workers, 1),
-            batch_method=self.parameters[0].algorithm_options.batch_method,
-            num_batch=self.parameters[0].algorithm_options.num_batch,
+            scan         = self.parameters[0].scan,
+            pool         = self.comm.pool,
+            shape        = ( self.comm.pool.num_workers, 1 ),
+            batch_method = self.parameters[0].algorithm_options.batch_method,
+            num_batch    = self.parameters[0].algorithm_options.num_batch,
         )
 
         self.data = self.comm.pool.map(
             tike.cluster._split_pinned,
             self.comm.order,
-            x=self.data[0],
-            dtype=tike.precision.floating
-            if self.data[0].itemsize > 2
-            else self.data[0].dtype,
+            x     = self.data[0],
+            dtype = tike.precision.floating if self.data[0].itemsize > 2 else self.data[0].dtype,
         )
 
         self.parameters = self.comm.pool.map(
@@ -394,25 +395,18 @@ class Reconstruction():
             self.comm.order,
             x=self.parameters[0],
         )
-        assert len(self.parameters) == self.comm.pool.num_workers, (
-            len(self.parameters),
-            self.comm.pool.num_workers,
-        )
-        assert self.parameters[0].psi.dtype == tike.precision.cfloating, self.parameters[0].psi.dtype
-        assert self.parameters[0].probe.dtype == tike.precision.cfloating, self.parameters[0].probe.dtype
-        assert self.parameters[0].scan.dtype == tike.precision.floating, self.parameters[0].probe.dtype
 
-        self.parameters = self.comm.pool.map(
-            solvers.PtychoParameters.copy_to_device,
-            self.parameters,
-        )
-        assert len(self.parameters) == self.comm.pool.num_workers, (
-            len(self.parameters),
-            self.comm.pool.num_workers,
-        )
-        assert self.parameters[0].psi.dtype == tike.precision.cfloating, self.parameters[0].psi.dtype
+        assert len(self.parameters) == self.comm.pool.num_workers, ( len(self.parameters), self.comm.pool.num_workers, )
+        assert self.parameters[0].psi.dtype   == tike.precision.cfloating, self.parameters[0].psi.dtype
         assert self.parameters[0].probe.dtype == tike.precision.cfloating, self.parameters[0].probe.dtype
-        assert self.parameters[0].scan.dtype == tike.precision.floating, self.parameters[0].probe.dtype
+        assert self.parameters[0].scan.dtype  == tike.precision.floating,  self.parameters[0].probe.dtype
+
+        self.parameters = self.comm.pool.map( solvers.PtychoParameters.copy_to_device, self.parameters, )
+
+        assert len(self.parameters) == self.comm.pool.num_workers, ( len(self.parameters), self.comm.pool.num_workers, )
+        assert self.parameters[0].psi.dtype   == tike.precision.cfloating, self.parameters[0].psi.dtype
+        assert self.parameters[0].probe.dtype == tike.precision.cfloating, self.parameters[0].probe.dtype
+        assert self.parameters[0].scan.dtype  == tike.precision.floating,  self.parameters[0].probe.dtype
 
         if self.parameters[0].probe_options is not None:
             if self.parameters[0].probe_options.init_rescale_from_measurements:
@@ -422,31 +416,32 @@ class Reconstruction():
                     self.data,
                     self.parameters,
                 )
-        assert self.parameters[0].psi.dtype == tike.precision.cfloating, self.parameters[0].psi.dtype
+
+        assert self.parameters[0].psi.dtype   == tike.precision.cfloating, self.parameters[0].psi.dtype
         assert self.parameters[0].probe.dtype == tike.precision.cfloating, self.parameters[0].probe.dtype
-        assert self.parameters[0].scan.dtype == tike.precision.floating, self.parameters[0].probe.dtype
+        assert self.parameters[0].scan.dtype  == tike.precision.floating,  self.parameters[0].probe.dtype
 
         return self
 
     def iterate(self, num_iter: int) -> None:
+
         """Advance the reconstruction by num_iter epochs."""
+
         start = time.perf_counter()
+
         # psi_previous = self.parameters[0].psi.copy()
+
         for i in range(num_iter):
 
-            if (
-                np.sum(self.parameters[0].algorithm_options.times)
-                > self.parameters[0].algorithm_options.time_limit
-            ):
+            if ( np.sum(self.parameters[0].algorithm_options.times) > self.parameters[0].algorithm_options.time_limit ):
                 logger.info("Maximum reconstruction time exceeded.")
                 break
 
-            logger.info(
-                f"{self.parameters[0].algorithm_options.name} epoch "
-                f"{len(self.parameters[0].algorithm_options.times):,d}"
+            logger.info( f"{self.parameters[0].algorithm_options.name} epoch "
+                         f"{len(self.parameters[0].algorithm_options.times):,d}"
             )
 
-            total_epochs = len(self.parameters[0].algorithm_options.times)
+            total_epochs = len( self.parameters[0].algorithm_options.times )
 
             self.parameters = self.comm.pool.map(
                 _apply_probe_constraints,
@@ -471,48 +466,39 @@ class Reconstruction():
                 epoch=len(self.parameters[0].algorithm_options.times),
             )
 
-            for i, reduced_probe in enumerate(
-                self.comm.Allreduce_mean(
-                    [e.probe[None, ...] for e in self.parameters],
-                    axis=0,
-                )
+            for i, reduced_probe in enumerate( 
+                self.comm.Allreduce_mean( [e.probe[None, ...] for e in self.parameters], axis=0, )
             ):
                 self.parameters[i].probe = reduced_probe
 
             if self.parameters[0].eigen_probe is not None:
                 for i, reduced_probe in enumerate(
-                    self.comm.Allreduce_mean(
-                        [e.eigen_probe[None, ...] for e in self.parameters],
-                        axis=0,
-                    )
+                    self.comm.Allreduce_mean( [e.eigen_probe[None, ...] for e in self.parameters], axis=0, )
                 ):
                     self.parameters[i].eigen_probe = reduced_probe
 
             pw = self.parameters[0].probe.shape[-2]
+
             for swapped, parameters in zip(
                 self.comm.swap_edges(
-                    [e.psi for e in self.parameters],
-                    # reduce overlap to stay away from edge noise
-                    overlap=pw-1,
-                    # The actual edge is centered on the probe
-                    edges=self.comm.stripe_start,
+                    [ e.psi for e in self.parameters ],
+                    overlap=pw-1,                               # reduce overlap to stay away from edge noise
+                    edges=self.comm.stripe_start,               # The actual edge is centered on the probe
                 ),
                 self.parameters,
             ):
                 parameters.psi = swapped
 
             if self.parameters[0].position_options is not None:
+
                 # FIXME: Synchronize across nodes
+
                 reduced_transform = np.mean(
-                    [e.position_options.transform.asbuffer() for e in self.parameters],
-                    axis=0,
+                    [e.position_options.transform.asbuffer() for e in self.parameters], axis=0,
                 )
+                
                 for i in range(len(self.parameters)):
-                    self.parameters[
-                        i
-                    ].position_options.transform = AffineTransform.frombuffer(
-                        reduced_transform
-                    )
+                    self.parameters[ i ].position_options.transform = AffineTransform.frombuffer( reduced_transform )
 
             self.parameters = self.comm.pool.map(
                 _apply_object_constraints,
@@ -528,17 +514,15 @@ class Reconstruction():
             # convergence properties of each worker's region may be different.
             # Checked momentum acceleration must use the local cost to compute
             # convergence properties.
+
             reduced_cost = list(
-                itertools.chain(
-                    *(e.algorithm_options.costs[-1] for e in self.parameters)
-                )
+                itertools.chain( *(e.algorithm_options.costs[-1] for e in self.parameters) )
             )
+
             for i in range(len(self.parameters)):
                 self.parameters[i].algorithm_options.costs[-1] = reduced_cost
 
-            self.parameters[0].algorithm_options.times.append(
-                time.perf_counter() - start
-            )
+            self.parameters[0].algorithm_options.times.append( time.perf_counter() - start )
             start = time.perf_counter()
 
             # update_norm = tike.linalg.mnorm(self.parameters.psi[0] -
@@ -557,10 +541,9 @@ class Reconstruction():
             #     )
             #     break
 
-            logger.info(
-                "%10s cost is %+1.3e",
-                self.parameters[0].exitwave_options.noise_model,
-                np.mean(self.parameters[0].algorithm_options.costs[-1]),
+            logger.info( "%10s cost is %+1.3e",
+                         self.parameters[0].exitwave_options.noise_model,
+                         np.mean(self.parameters[0].algorithm_options.costs[-1]),
             )
 
     def get_scan(self) -> npt.NDArray:

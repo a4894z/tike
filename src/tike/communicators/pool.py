@@ -11,7 +11,6 @@ import warnings
 import cupy as cp
 import numpy as np
 
-
 class NoPoolExecutor():
     """Replaces ThreadPoolExecutor when only one thread is needed."""
 
@@ -65,29 +64,36 @@ class ThreadPool():
         xp=cp,
         device_count: typing.Union[int, None] = None,
     ):
-        self.device_count = cp.cuda.runtime.getDeviceCount(
-        ) if device_count is None else device_count
+        
+        self.device_count = cp.cuda.runtime.getDeviceCount( ) if device_count is None else device_count
+
         if isinstance(workers, int):
+
             if workers < 1:
                 raise ValueError(f"Provide workers > 0, not {workers}.")
+            
             if workers > self.device_count:
                 warnings.warn(
                     "Not enough CUDA devices for workers!"
                     f" Requested {workers} of {self.device_count} devices.")
                 workers = min(workers, self.device_count)
+
             if workers == 1:
                 # Respect "with cp.cuda.Device()" blocks for single thread
                 workers = (int(cp.cuda.Device().id),)
+
             else:
                 workers = tuple(range(workers))
+
         for w in workers:
             if w < 0 or w >= self.device_count:
                 raise ValueError(f'{w} is not a valid GPU device number.')
+            
         self.workers = workers
+
         self.xp = xp
-        self.executor = ThreadPoolExecutor(
-            self.num_workers) if self.num_workers > 1 else NoPoolExecutor(
-                self.num_workers)
+
+        self.executor = ThreadPoolExecutor( self.num_workers ) if self.num_workers > 1 else NoPoolExecutor( self.num_workers )
 
         def f(worker):
             with self.Device(worker):
@@ -96,12 +102,16 @@ class ThreadPool():
         self.streams = list(self.executor.map(f, self.workers))
 
     def __enter__(self):
+
         if self.workers[0] != cp.cuda.Device().id:
+
             raise ValueError(
                 "The primary worker must be the current device. "
                 f"Use `with cupy.cuda.Device({self.workers[0]}):` to set the "
                 "current device.")
+        
         self.executor.__enter__()
+
         return self
 
     def __exit__(self, type, value, traceback):
@@ -145,8 +155,7 @@ class ThreadPool():
 
         """
         assert stride >= 1, f"Stride cannot be less than 1; it is {stride}."
-        assert stride <= len(
-            x), f"Stride cannot be greater than {len(x)}; it is {stride}."
+        assert stride <= len( x ), f"Stride cannot be greater than {len(x)}; it is {stride}."
 
         def f(worker):
             idx = self.workers.index(worker) % stride
@@ -173,14 +182,10 @@ class ThreadPool():
             merge = self.xp.stack
             axis = 0
         else:
-            assert x[
-                0].ndim > 0, "Cannot concatenate zero-dimensional arrays; use `axis=None`"
+            assert x[0].ndim > 0, "Cannot concatenate zero-dimensional arrays; use `axis=None`"
             merge = self.xp.concatenate
         with self.Device(worker):
-            return merge(
-                [self._copy_to(part, worker) for part in x],
-                axis=axis,
-            )
+            return merge( [ self._copy_to( part, worker ) for part in x], axis=axis, )
 
     def gather_host(
         self,

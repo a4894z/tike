@@ -166,10 +166,7 @@ def by_scan_stripes(
 
     # Generate masks which put points into stripes
     return [
-        np.logical_and(
-            edges[i] < scan[:, 0, axis],
-            scan[:, 0, axis] <= edges[i + 1],
-        ).repeat(fly) for i in range(n)
+        np.logical_and( edges[i] < scan[:, 0, axis], scan[:, 0, axis] <= edges[i + 1], ).repeat(fly) for i in range(n)
     ]
 
 
@@ -177,15 +174,10 @@ def by_scan_stripes_contiguous(
     pool: tike.communicators.ThreadPool,
     shape: typing.Tuple[int],
     scan: npt.NDArray[np.float32],
-    batch_method: typing.Literal[
-        "compact", "wobbly_center", "wobbly_center_random_bootstrap"
-    ],
+    batch_method: typing.Literal[ "compact", "wobbly_center", "wobbly_center_random_bootstrap" ],
     num_batch: int,
-) -> typing.Tuple[
-    typing.List[npt.NDArray],
-    typing.List[typing.List[npt.NDArray]],
-    typing.List[int],
-]:
+    ) -> typing.Tuple[ typing.List[npt.NDArray], typing.List[typing.List[npt.NDArray]], typing.List[int], ]:
+    
     """Return the indices that will split `scan` into 2D stripes of equal count
     and create contiguously ordered batches within those stripes.
 
@@ -220,38 +212,46 @@ def by_scan_stripes_contiguous(
         dimension in the scan coordinates. e.g the minimum coordinate of the
         scan positions in each stripe.
     """
-    if len(shape) != 2:
-        raise ValueError('The grid shape must have two dimensions.')
+
+    # if len(shape) != 2:
+    #     raise ValueError('The grid shape must have two dimensions.')
 
     map_to_gpu = stripes_equal_count(
         population=scan,
         num_cluster=shape[0] * shape[1],
         dim=0,
     )
+
     split_scan = pool.map(
         _split_host,
         map_to_gpu,
         x=scan,
         dtype=scan.dtype,
     )
+
     stripe_start = [int(np.floor(np.min(x[:, 0]))) for x in split_scan]
+
     batches_noncontiguous: typing.List[typing.List[npt.NDArray]] = pool.map(
         getattr(tike.cluster, batch_method),
         split_scan,
         num_cluster=num_batch,
     )
+
     map_to_gpu_contiguous: typing.List[npt.NDArray] = []
+
     batches_contiguous: typing.List[typing.List[npt.NDArray]] = []
+
     for gpu_map, batch_map in zip(map_to_gpu, batches_noncontiguous):
+
         batch_indices = gpu_map[np.concatenate(batch_map)]
+
         map_to_gpu_contiguous.append(batch_indices)
+
         batch_sizes = [len(batch) for batch in batch_map]
+
         batch_breaks = np.cumsum(batch_sizes)[:-1]
-        batches_contiguous.append(
-            np.array_split(
-                np.arange(len(batch_indices)),
-                batch_breaks,
-            ))
+
+        batches_contiguous.append( np.array_split( np.arange(len(batch_indices)), batch_breaks, ))
 
     if __debug__:
         for device in batches_contiguous:
@@ -259,7 +259,7 @@ def by_scan_stripes_contiguous(
                 f"There should be {num_batch} batches, found {len(device)}"
             )
 
-    return (map_to_gpu_contiguous, batches_contiguous, stripe_start)
+    return ( map_to_gpu_contiguous, batches_contiguous, stripe_start )
 
 
 def stripes_equal_count(
@@ -287,16 +287,16 @@ def stripes_equal_count(
     indicies : (num_cluster,) list of array of integer
         The indicies of population that belong to each cluster.
     """
+
     logger.info("Clustering method is stripes.")
-    xp = cp.get_array_module(population)
-    if (num_cluster == 1) or (num_cluster >= len(population)):
-        return np.array_split(np.arange(population.shape[0]), num_cluster)
-    # Sort the population along the dimension, then split into ranges of approx
-    # equal size
-    return np.array_split(
-        cp.asnumpy(xp.argsort(population[:, dim])),
-        num_cluster,
-    )
+
+    xp = cp.get_array_module( population )
+
+    if ( num_cluster == 1 ) or ( num_cluster >= len( population )):
+        return np.array_split( np.arange( population.shape[0] ), num_cluster )
+    
+    # Sort the population along the dimension, then split into ranges of approx equal size
+    return np.array_split( cp.asnumpy(xp.argsort(population[:, dim])), num_cluster, )
 
 
 def wobbly_center(
